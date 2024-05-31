@@ -868,6 +868,8 @@ impl BtcSwapTxV2 {
         }) = is_cooperative
         {
             // Start the Musig session
+            refund_tx.lock_time = LockTime::ZERO; // No locktime for cooperative spend
+
             // Step 1: Get the sighash
             let refund_tx_taproot_hash = SighashCache::new(refund_tx.clone())
                 .taproot_key_spend_signature_hash(
@@ -937,7 +939,7 @@ impl BtcSwapTxV2 {
                 &key_agg_cache,
                 boltz_partial_sig,
                 boltz_public_nonce,
-                self.swap_script.receiver_pubkey.inner,
+                self.swap_script.receiver_pubkey.inner, //boltz key
             );
 
             if !boltz_partial_sig_verify {
@@ -964,8 +966,6 @@ impl BtcSwapTxV2 {
             witness.push(final_schnorr_sig.to_vec());
 
             refund_tx.input[0].witness = witness;
-
-            refund_tx.lock_time = LockTime::ZERO; // No locktime for cooperative spend
         } else {
             refund_tx.input[0].sequence = Sequence::ZERO;
 
