@@ -631,9 +631,39 @@ pub struct ReversePartialSig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Update {
+pub struct SwapUpdateTxDetails {
     pub id: String,
-    pub status: String,
+    pub hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Update {
+    TransactionMempool {
+        id: String,
+        status: String,
+        transaction: SwapUpdateTxDetails,
+    },
+    Generic {
+        id: String,
+        status: String,
+    },
+}
+
+impl Update {
+    pub fn id(&self) -> &String {
+        match self {
+            Update::Generic { id, .. } => id,
+            Update::TransactionMempool { id, .. } => id,
+        }
+    }
+
+    pub fn status(&self) -> &String {
+        match self {
+            Update::Generic { status, .. } => status,
+            Update::TransactionMempool { status, .. } => status,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
