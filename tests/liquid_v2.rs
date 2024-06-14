@@ -4,9 +4,8 @@ use boltz_client::{
     network::{electrum::ElectrumConfig, Chain},
     swaps::{
         boltzv2::{
-            BoltzApiClientV2, CreateReverseRequest, CreateSubmarineRequest,
-            CreateSubmarineResponse, Subscription, SwapUpdate, BOLTZ_MAINNET_URL_V2,
-            BOLTZ_TESTNET_URL_V2,
+            BoltzApiClientV2, Cooperative, CreateReverseRequest, CreateSubmarineRequest,
+            Subscription, SwapUpdate, BOLTZ_MAINNET_URL_V2, BOLTZ_TESTNET_URL_V2,
         },
         magic_routing::{check_for_mrh, sign_address},
     },
@@ -17,11 +16,11 @@ use boltz_client::{
 use bitcoin::{
     hashes::{sha256, Hash},
     hex::{DisplayHex, FromHex},
-    key::{self, rand::thread_rng},
+    key::rand::thread_rng,
     secp256k1::Keypair,
     Amount, PublicKey,
 };
-use elements::{encode::serialize, Address};
+use elements::encode::serialize;
 
 pub mod test_utils;
 
@@ -60,6 +59,7 @@ fn liquid_v2_submarine() {
         to: "BTC".to_string(),
         invoice: invoice.to_string(),
         refund_public_key,
+        pair_hash: None,
         referral_id: None,
     };
 
@@ -121,7 +121,7 @@ fn liquid_v2_submarine() {
                     assert!(event == "update");
                     assert!(channel == "swap.update");
                     let update = args.get(0).expect("expected");
-                    assert!(update.id == create_swap_response.clone().id);
+                    assert!(*update.id == create_swap_response.clone().id);
                     log::info!("Got Update from server: {}", update.status);
 
                     // Invoice is Set. Waiting for us to send onchain tx.
@@ -147,7 +147,7 @@ fn liquid_v2_submarine() {
                         // why? ^^^s
 
                         let claim_tx_response = boltz_api_v2
-                            .get_claim_tx_details(&create_swap_response.clone().id)
+                            .get_submarine_claim_tx_details(&create_swap_response.clone().id)
                             .unwrap();
 
                         log::debug!("Received claim tx details : {:?}", claim_tx_response);
@@ -163,10 +163,14 @@ fn liquid_v2_submarine() {
 
                         // Compute and send Musig2 partial sig
                         let (partial_sig, pub_nonce) = swap_tx
-                            .submarine_partial_sig(&our_keys, &claim_tx_response)
+                            .partial_sig(
+                                &our_keys,
+                                &claim_tx_response.pub_nonce,
+                                &claim_tx_response.transaction_hash,
+                            )
                             .unwrap();
                         boltz_api_v2
-                            .post_claim_tx_details(
+                            .post_submarine_claim_tx_details(
                                 &create_swap_response.clone().id,
                                 pub_nonce,
                                 partial_sig,
@@ -177,9 +181,7 @@ fn liquid_v2_submarine() {
 
                     // This means the funding transaction was rejected by Boltz for whatever reason, and we need to get
                     // fund back via refund.
-                    if update.status == "transaction.lockupFailed"
-                        || update.status == "invoice.failedToPay"
-                    {
+                    if update.status == "transaction.lockupFailed" || update.status == "invoice.failedToPay" {
                         let swap_tx = LBtcSwapTxV2::new_refund(
                             swap_script.clone(),
                             &refund_address,
@@ -192,7 +194,12 @@ fn liquid_v2_submarine() {
                         match swap_tx.sign_refund(
                             &our_keys,
                             Amount::from_sat(1000),
-                            Some((&boltz_api_v2, &create_swap_response.id)),
+                            Some(Cooperative {
+                                boltz_api: &boltz_api_v2,
+                                swap_id: create_swap_response.id.clone(),
+                                pub_nonce: None,
+                                partial_sig: None,
+                            }),
                         ) {
                             Ok(tx) => {
                                 println!("{}", tx.serialize().to_lower_hex_string());
@@ -335,7 +342,7 @@ fn liquid_v2_reverse() {
                     assert!(event == "update");
                     assert!(channel == "swap.update");
                     let update = args.get(0).expect("expected");
-                    assert!(&update.id == &swap_id);
+                    assert!(*update.id == swap_id);
                     log::info!("Got Update from server: {}", update.status);
 
                     if update.status == "swap.created" {
@@ -362,7 +369,12 @@ fn liquid_v2_reverse() {
                                 &our_keys,
                                 &preimage,
                                 Amount::from_sat(1000),
-                                Some((&boltz_api_v2, swap_id.clone())),
+                                Some(Cooperative {
+                                    boltz_api: &boltz_api_v2,
+                                    swap_id: swap_id.clone(),
+                                    pub_nonce: None,
+                                    partial_sig: None,
+                                }),
                             )
                             .unwrap();
 
@@ -436,7 +448,7 @@ fn test_recover_liquidv2_refund() {
         "1b581bed3300b146c61bdb3e5b58413f85299b71ab36401a8e02ec38d57925aa".to_string();
     let absolute_fees = 1_200;
     let network_config = ElectrumConfig::default(Chain::Liquid, None).unwrap();
-    let swap_script: LBtcSwapScriptV2 = createSwapScriptV2(
+    let swap_script: LBtcSwapScriptV2 = create_swap_script_v2(
         script_address,
         preimage.hash160.to_string(),
         boltz_pubkey,
@@ -454,7 +466,12 @@ fn test_recover_liquidv2_refund() {
     )
     .unwrap();
     let client = BoltzApiClientV2::new(BOLTZ_MAINNET_URL_V2);
-    let coop = Some((&client, &id));
+    let coop = Some(Cooperative {
+        boltz_api: &client,
+        swap_id: id,
+        pub_nonce: None,
+        partial_sig: None,
+    });
     let signed_tx = rev_swap_tx
         .sign_refund(&keypair, Amount::from_sat(absolute_fees), coop)
         .unwrap();
@@ -467,7 +484,7 @@ fn test_recover_liquidv2_refund() {
     println!("{}", txid);
 }
 
-fn createSwapScriptV2(
+fn create_swap_script_v2(
     address: String,
     hashlock: String,
     receiver_pub: String,

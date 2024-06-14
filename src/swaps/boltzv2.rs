@@ -40,22 +40,22 @@ pub struct HeightResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ReverseLimits {
-    /// Maximum swap amount
-    pub maximal: u64,
-    /// Minimum swap amount
-    pub minimal: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SubmarineLimits {
+pub struct PairLimits {
     /// Maximum swap amount
     pub maximal: u64,
     /// Minimum swap amount
     pub minimal: u64,
     /// Maximum amount allowed for zero-conf
     pub maximal_zero_conf: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReverseLimits {
+    /// Maximum swap amount
+    pub maximal: u64,
+    /// Minimum swap amount
+    pub minimal: u64,
 }
 
 fn check_limits_within(maximal: u64, minimal: u64, output_amount: u64) -> Result<(), Error> {
@@ -74,6 +74,13 @@ fn check_limits_within(maximal: u64, minimal: u64, output_amount: u64) -> Result
     Ok(())
 }
 
+impl PairLimits {
+    /// Check whether the output amount intended is within the Limits
+    pub fn within(&self, output_amount: u64) -> Result<(), Error> {
+        check_limits_within(self.maximal, self.minimal, output_amount)
+    }
+}
+
 impl ReverseLimits {
     /// Check whether the output amount intended is within the Limits
     pub fn within(&self, output_amount: u64) -> Result<(), Error> {
@@ -81,25 +88,54 @@ impl ReverseLimits {
     }
 }
 
-impl SubmarineLimits {
-    /// Check whether the output amount intended is within the Limits
-    pub fn within(&self, output_amount: u64) -> Result<(), Error> {
-        check_limits_within(self.maximal, self.minimal, output_amount)
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ReverseMinerFees {
+pub struct PairMinerFees {
     lockup: u64,
     claim: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct ChainMinerFees {
+    server: u64,
+    user: PairMinerFees,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainFees {
+    pub percentage: f64,
+    pub miner_fees: ChainMinerFees,
+}
+
+impl ChainFees {
+    pub fn total(&self, amount_sat: u64) -> u64 {
+        self.boltz(amount_sat) + self.claim_estimate() + self.lockup()
+    }
+
+    pub fn boltz(&self, amount_sat: u64) -> u64 {
+        ((self.percentage / 100.0) * amount_sat as f64).ceil() as u64
+    }
+
+    pub fn claim_estimate(&self) -> u64 {
+        self.miner_fees.user.claim
+    }
+
+    pub fn lockup(&self) -> u64 {
+        self.miner_fees.user.lockup
+    }
+
+    pub fn server(&self) -> u64 {
+        self.miner_fees.server
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ReverseFees {
     pub percentage: f64,
-    pub miner_fees: ReverseMinerFees,
+    pub miner_fees: PairMinerFees,
 }
 
 impl ReverseFees {
@@ -143,6 +179,19 @@ impl SubmarineFees {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct ChainPair {
+    /// Pair hash, representing an id for an asset-pair swap
+    pub hash: String,
+    /// The exchange rate of the pair
+    pub rate: f64,
+    /// The swap limits
+    pub limits: PairLimits,
+    /// Total fees required for the swap
+    pub fees: ChainFees,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ReversePair {
     /// Pair hash, representing an id for an asset-pair swap
     pub hash: String,
@@ -162,7 +211,7 @@ pub struct SubmarinePair {
     /// The exchange rate of the pair
     pub rate: f64,
     /// The swap limits
-    pub limits: ReverseLimits,
+    pub limits: PairLimits,
     /// Total fees required for the swap
     pub fees: SubmarineFees,
 }
@@ -218,6 +267,28 @@ impl GetReversePairsResponse {
     /// Returns None if not found.
     pub fn get_btc_to_lbtc_pair(&self) -> Option<ReversePair> {
         self.btc.get("L-BTC").cloned()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetChainPairsResponse {
+    #[serde(rename = "BTC")]
+    pub btc: HashMap<String, ChainPair>,
+    #[serde(rename = "L-BTC")]
+    lbtc: HashMap<String, ChainPair>,
+}
+
+impl GetChainPairsResponse {
+    /// Get the BtcLBtc Pair data from the response.
+    /// Returns None if not found.
+    pub fn get_btc_to_lbtc_pair(&self) -> Option<ChainPair> {
+        self.btc.get("L-BTC").cloned()
+    }
+
+    /// Get the LBtcBtc Pair data from the response.
+    /// Returns None if not found.
+    pub fn get_lbtc_to_btc_pair(&self) -> Option<ChainPair> {
+        self.lbtc.get("BTC").cloned()
     }
 }
 
@@ -304,6 +375,10 @@ impl BoltzApiClientV2 {
         Ok(serde_json::from_str(&self.get("swap/reverse")?)?)
     }
 
+    pub fn get_chain_pairs(&self) -> Result<GetChainPairsResponse, Error> {
+        Ok(serde_json::from_str(&self.get("swap/chain")?)?)
+    }
+
     pub fn post_swap_req(
         &self,
         swap_request: &CreateSubmarineRequest,
@@ -312,12 +387,31 @@ impl BoltzApiClientV2 {
         Ok(serde_json::from_str(&self.post("swap/submarine", data)?)?)
     }
 
-    pub fn get_claim_tx_details(&self, id: &String) -> Result<ClaimTxResponse, Error> {
+    pub fn post_reverse_req(
+        &self,
+        req: CreateReverseRequest,
+    ) -> Result<CreateReverseResponse, Error> {
+        Ok(serde_json::from_str(&self.post("swap/reverse", req)?)?)
+    }
+
+    pub fn post_chain_req(&self, req: CreateChainRequest) -> Result<CreateChainResponse, Error> {
+        Ok(serde_json::from_str(&self.post("swap/chain", req)?)?)
+    }
+
+    pub fn get_submarine_claim_tx_details(
+        &self,
+        id: &String,
+    ) -> Result<SubmarineClaimTxResponse, Error> {
         let endpoint = format!("swap/submarine/{}/claim", id);
         Ok(serde_json::from_str(&self.get(&endpoint)?)?)
     }
 
-    pub fn post_claim_tx_details(
+    pub fn get_chain_claim_tx_details(&self, id: &String) -> Result<ChainClaimTxResponse, Error> {
+        let endpoint = format!("swap/chain/{}/claim", id);
+        Ok(serde_json::from_str(&self.get(&endpoint)?)?)
+    }
+
+    pub fn post_submarine_claim_tx_details(
         &self,
         id: &String,
         pub_nonce: MusigPubNonce,
@@ -333,11 +427,26 @@ impl BoltzApiClientV2 {
         Ok(serde_json::from_str(&self.post(&endpoint, data)?)?)
     }
 
-    pub fn post_reverse_req(
+    pub fn post_chain_claim_tx_details(
         &self,
-        req: CreateReverseRequest,
-    ) -> Result<CreateReverseResponse, Error> {
-        Ok(serde_json::from_str(&self.post("swap/reverse", req)?)?)
+        id: &String,
+        preimage: &Preimage,
+        pub_nonce: MusigPubNonce,
+        partial_sig: MusigPartialSignature,
+        to_sign: ToSign,
+    ) -> Result<PartialSig, Error> {
+        let data = json!(
+            {
+                "preimage": preimage.bytes.expect("expected").to_lower_hex_string(),
+                "signature": PartialSig {
+                    pub_nonce: pub_nonce.serialize().to_lower_hex_string(),
+                    partial_signature: partial_sig.serialize().to_lower_hex_string(),
+                },
+                "toSign": to_sign,
+            }
+        );
+        let endpoint = format!("swap/chain/{}/claim", id);
+        Ok(serde_json::from_str(&self.post(&endpoint, data)?)?)
     }
 
     pub fn get_reverse_tx(&self, id: &str) -> Result<ReverseSwapTxResp, Error> {
@@ -352,13 +461,19 @@ impl BoltzApiClientV2 {
         )?)
     }
 
+    pub fn get_chain_txs(&self, id: &str) -> Result<ChainSwapTxResp, Error> {
+        Ok(serde_json::from_str(
+            &self.get(&format!("swap/chain/{}/transactions", id))?,
+        )?)
+    }
+
     pub fn get_reverse_partial_sig(
         &self,
         id: &String,
         preimage: &Preimage,
         pub_nonce: &MusigPubNonce,
         claim_tx_hex: &String,
-    ) -> Result<ReversePartialSig, Error> {
+    ) -> Result<PartialSig, Error> {
         let data = json!(
             {
                 "preimage": preimage.bytes.expect("expected").to_lower_hex_string(),
@@ -377,7 +492,7 @@ impl BoltzApiClientV2 {
         id: &String,
         pub_nonce: &MusigPubNonce,
         refund_tx_hex: &String,
-    ) -> Result<ReversePartialSig, Error> {
+    ) -> Result<PartialSig, Error> {
         let data = json!(
             {
                 "pubNonce": pub_nonce.serialize().to_lower_hex_string(),
@@ -387,6 +502,24 @@ impl BoltzApiClientV2 {
         );
 
         let endpoint = format!("swap/submarine/{}/refund", id);
+        Ok(serde_json::from_str(&self.post(&endpoint, data)?)?)
+    }
+
+    pub fn get_chain_partial_sig(
+        &self,
+        id: &String,
+        pub_nonce: &MusigPubNonce,
+        refund_tx_hex: &String,
+    ) -> Result<PartialSig, Error> {
+        let data = json!(
+            {
+                "pubNonce": pub_nonce.serialize().to_lower_hex_string(),
+                "transaction": refund_tx_hex,
+                "index": 0
+            }
+        );
+
+        let endpoint = format!("swap/chain/{}/refund", id);
         Ok(serde_json::from_str(&self.post(&endpoint, data)?)?)
     }
 
@@ -414,7 +547,15 @@ impl BoltzApiClientV2 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaimTxResponse {
+pub struct ChainClaimTxResponse {
+    pub pub_nonce: String,
+    pub public_key: PublicKey,
+    pub transaction_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmarineClaimTxResponse {
     pub preimage: String,
     pub pub_nonce: String,
     pub public_key: PublicKey,
@@ -466,15 +607,7 @@ impl CreateSubmarineResponse {
             Chain::Bitcoin | Chain::BitcoinTestnet | Chain::BitcoinRegtest => {
                 let boltz_sub_script =
                     BtcSwapScriptV2::submarine_from_swap_resp(&self, *our_pubkey)?;
-
-                let address = boltz_sub_script.to_address(chain)?;
-                if address.to_string() == self.address {
-                    Ok(())
-                } else {
-                    Err(Error::Protocol(
-                        "Script/FundingAddress Mismatch".to_string(),
-                    ))
-                }
+                boltz_sub_script.validate_address(chain, self.address.clone())
             }
             Chain::Liquid | Chain::LiquidTestnet | Chain::LiquidRegtest => {
                 let blinding_key = self.blinding_key.as_ref().unwrap();
@@ -488,15 +621,7 @@ impl CreateSubmarineResponse {
                     )));
                 }
 
-                let address = boltz_sub_script.to_address(chain)?;
-
-                if address.to_string() == self.address {
-                    Ok(())
-                } else {
-                    Err(Error::Protocol(
-                        "Script/FundingAddress Mismatch".to_string(),
-                    ))
-                }
+                boltz_sub_script.validate_address(chain, self.address.clone())
             }
         }
     }
@@ -584,28 +709,129 @@ impl CreateReverseResponse {
         match chain {
             Chain::Bitcoin | Chain::BitcoinTestnet | Chain::BitcoinRegtest => {
                 let boltz_rev_script = BtcSwapScriptV2::reverse_from_swap_resp(&self, *our_pubkey)?;
-                let address = boltz_rev_script.to_address(chain)?;
-                if address.to_string() == self.lockup_address {
-                    Ok(())
-                } else {
-                    Err(Error::Protocol("Script/LockupAddress Mismatch".to_string()))
-                }
+                boltz_rev_script.validate_address(chain, self.lockup_address.clone())
             }
             Chain::Liquid | Chain::LiquidTestnet | Chain::LiquidRegtest => {
                 let blinding_key = self.blinding_key.as_ref().unwrap();
                 let boltz_rev_script =
                     LBtcSwapScriptV2::reverse_from_swap_resp(&self, *our_pubkey)?;
-
-                let address = boltz_rev_script.to_address(chain)?;
-                if address.to_string() == self.lockup_address {
-                    Ok(())
-                } else {
-                    Err(Error::Protocol("Script/LockupAddress Mismatch".to_string()))
-                }
+                boltz_rev_script.validate_address(chain, self.lockup_address.clone())
             }
         }
     }
 }
+
+#[derive(Debug)]
+pub enum Side {
+    From,
+    To,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSwapDetails {
+    pub swap_tree: SwapTree,
+    pub lockup_address: String,
+    pub server_public_key: PublicKey,
+    pub timeout_block_height: u32,
+    pub amount: u32,
+    pub blinding_key: Option<String>,
+    pub refund_address: Option<String>,
+    pub claim_address: Option<String>,
+    pub bip21: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChainRequest {
+    pub from: String,
+    pub to: String,
+    pub preimage_hash: sha256::Hash,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_public_key: Option<PublicKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refund_public_key: Option<PublicKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_lock_amount: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_lock_amount: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pair_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub referral_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChainResponse {
+    pub id: String,
+    pub claim_details: ChainSwapDetails,
+    pub lockup_details: ChainSwapDetails,
+}
+impl CreateChainResponse {
+    /// Validate chain swap response
+    pub fn validate(
+        &self,
+        claim_pubkey: &PublicKey,
+        refund_pubkey: &PublicKey,
+        from_chain: Chain,
+        to_chain: Chain,
+    ) -> Result<(), Error> {
+        self.validate_side(Side::From, from_chain, &self.lockup_details, refund_pubkey)?;
+        self.validate_side(Side::To, to_chain, &self.claim_details, claim_pubkey)
+    }
+
+    fn validate_side(
+        &self,
+        side: Side,
+        chain: Chain,
+        details: &ChainSwapDetails,
+        our_pubkey: &PublicKey,
+    ) -> Result<(), Error> {
+        match chain {
+            Chain::Bitcoin | Chain::BitcoinTestnet | Chain::BitcoinRegtest => {
+                let boltz_chain_script =
+                    BtcSwapScriptV2::chain_from_swap_resp(side, details.clone(), *our_pubkey)?;
+                boltz_chain_script.validate_address(chain, details.lockup_address.clone())
+            }
+            Chain::Liquid | Chain::LiquidTestnet | Chain::LiquidRegtest => {
+                let blinding_key = details.blinding_key.as_ref().unwrap();
+                let boltz_chain_script =
+                    LBtcSwapScriptV2::chain_from_swap_resp(side, details.clone(), *our_pubkey)?;
+                boltz_chain_script.validate_address(chain, details.lockup_address.clone())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSwapTx {
+    pub id: String,
+    pub hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSwapTxTimeout {
+    pub block_height: u32,
+    pub eta: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSwapTxLock {
+    pub transaction: ChainSwapTx,
+    pub timeout: ChainSwapTxTimeout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSwapTxResp {
+    pub user_lock: Option<ChainSwapTxLock>,
+    pub server_lock: Option<ChainSwapTxLock>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReverseSwapTxResp {
@@ -625,9 +851,26 @@ pub struct SubmarineSwapTxResp {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReversePartialSig {
+pub struct PartialSig {
     pub pub_nonce: String,
     pub partial_signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToSign {
+    pub pub_nonce: String,
+    pub transaction: String,
+    pub index: u32,
+}
+
+pub struct Cooperative<'a> {
+    pub boltz_api: &'a BoltzApiClientV2,
+    pub swap_id: String,
+    /// The pub_nonce is needed to post the claim tx details of the Chain swap
+    pub pub_nonce: Option<MusigPubNonce>,
+    /// The partial_sig is needed to post the claim tx details of the Chain swap
+    pub partial_sig: Option<MusigPartialSignature>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -637,33 +880,12 @@ pub struct SwapUpdateTxDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Update {
-    TransactionMempool {
-        id: String,
-        status: String,
-        transaction: SwapUpdateTxDetails,
-    },
-    Generic {
-        id: String,
-        status: String,
-    },
-}
-
-impl Update {
-    pub fn id(&self) -> &String {
-        match self {
-            Update::Generic { id, .. } => id,
-            Update::TransactionMempool { id, .. } => id,
-        }
-    }
-
-    pub fn status(&self) -> &String {
-        match self {
-            Update::Generic { status, .. } => status,
-            Update::TransactionMempool { status, .. } => status,
-        }
-    }
+#[serde(rename_all = "camelCase")]
+pub struct Update {
+    pub id: String,
+    pub status: String,
+    pub transaction: Option<SwapUpdateTxDetails>,
+    pub zero_conf_rejected: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
