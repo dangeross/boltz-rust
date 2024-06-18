@@ -55,6 +55,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct LBtcSwapScriptV2 {
     pub swap_type: SwapType,
+    pub side: Option<Side>,
     pub funding_addrs: Option<Address>,
     pub hashlock: hash160::Hash,
     pub receiver_pubkey: PublicKey,
@@ -123,6 +124,7 @@ impl LBtcSwapScriptV2 {
 
         Ok(Self {
             swap_type: SwapType::Submarine,
+            side: None,
             funding_addrs: Some(funding_addrs),
             hashlock,
             receiver_pubkey: create_swap_response.claim_public_key,
@@ -191,6 +193,7 @@ impl LBtcSwapScriptV2 {
 
         Ok(Self {
             swap_type: SwapType::ReverseSubmarine,
+            side: None,
             funding_addrs: Some(funding_addrs),
             hashlock,
             receiver_pubkey: our_pubkey,
@@ -265,6 +268,7 @@ impl LBtcSwapScriptV2 {
 
         Ok(Self {
             swap_type: SwapType::Chain,
+            side: Some(side),
             funding_addrs: Some(funding_addrs),
             hashlock,
             receiver_pubkey,
@@ -308,15 +312,14 @@ impl LBtcSwapScriptV2 {
     }
 
     pub fn musig_keyagg_cache(&self) -> MusigKeyAggCache {
-        match self.swap_type {
-            // TODO: check
-            SwapType::Submarine | SwapType::Chain => {
-                let pubkeys = [self.receiver_pubkey.inner, self.sender_pubkey.inner];
+        match (self.swap_type, self.side.clone()) {
+            (SwapType::ReverseSubmarine, _) | (SwapType::Chain, Some(Side::To)) => {
+                let pubkeys = [self.sender_pubkey.inner, self.receiver_pubkey.inner];
                 MusigKeyAggCache::new(&Secp256k1::new(), &pubkeys)
             }
 
-            SwapType::ReverseSubmarine => {
-                let pubkeys = [self.sender_pubkey.inner, self.receiver_pubkey.inner];
+            (SwapType::Submarine, _) | (SwapType::Chain, _) => {
+                let pubkeys = [self.receiver_pubkey.inner, self.sender_pubkey.inner];
                 MusigKeyAggCache::new(&Secp256k1::new(), &pubkeys)
             }
         }
