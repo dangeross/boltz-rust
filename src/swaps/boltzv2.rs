@@ -38,6 +38,23 @@ pub struct HeightResponse {
     pub lbtc: u32,
 }
 
+fn check_limits_within(maximal: u64, minimal: u64, output_amount: u64) -> Result<(), Error> {
+    if output_amount < minimal as u64 {
+        return Err(Error::Protocol(format!(
+            "Output amount is below minimum {}",
+            minimal
+        )));
+    }
+    if output_amount > maximal as u64 {
+        return Err(Error::Protocol(format!(
+            "Output amount is above maximum {}",
+            maximal
+        )));
+    }
+    Ok(())
+}
+
+/// Various limits of swap parameters
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PairLimits {
@@ -49,6 +66,13 @@ pub struct PairLimits {
     pub maximal_zero_conf: u64,
 }
 
+impl PairLimits {
+    /// Check whether the output amount intended is within the Limits
+    pub fn within(&self, output_amount: u64) -> Result<(), Error> {
+        check_limits_within(self.maximal, self.minimal, output_amount)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReverseLimits {
@@ -56,29 +80,6 @@ pub struct ReverseLimits {
     pub maximal: u64,
     /// Minimum swap amount
     pub minimal: u64,
-}
-
-fn check_limits_within(maximal: u64, minimal: u64, output_amount: u64) -> Result<(), Error> {
-    if output_amount < minimal as u64 {
-        return Err(Error::Protocol(format!(
-            "Ouput amount is below minimum {}",
-            minimal
-        )));
-    }
-    if output_amount > maximal as u64 {
-        return Err(Error::Protocol(format!(
-            "Ouput amount is above maximum {}",
-            maximal
-        )));
-    }
-    Ok(())
-}
-
-impl PairLimits {
-    /// Check whether the output amount intended is within the Limits
-    pub fn within(&self, output_amount: u64) -> Result<(), Error> {
-        check_limits_within(self.maximal, self.minimal, output_amount)
-    }
 }
 
 impl ReverseLimits {
@@ -159,7 +160,9 @@ impl ReverseFees {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmarineFees {
+    /// The percentage of the "send amount" that is charged by Boltz as "Boltz Fee".
     pub percentage: f64,
+    /// The network fees charged for locking up and claiming funds onchain. These values are absolute, denominated in 10 ** -8 of the quote asset.
     pub miner_fees: u64,
 }
 
@@ -723,8 +726,8 @@ impl CreateReverseResponse {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Side {
-    From,
-    To,
+    Lockup,
+    Claim,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -777,8 +780,13 @@ impl CreateChainResponse {
         from_chain: Chain,
         to_chain: Chain,
     ) -> Result<(), Error> {
-        self.validate_side(Side::From, from_chain, &self.lockup_details, refund_pubkey)?;
-        self.validate_side(Side::To, to_chain, &self.claim_details, claim_pubkey)
+        self.validate_side(
+            Side::Lockup,
+            from_chain,
+            &self.lockup_details,
+            refund_pubkey,
+        )?;
+        self.validate_side(Side::Claim, to_chain, &self.claim_details, claim_pubkey)
     }
 
     fn validate_side(

@@ -256,14 +256,14 @@ impl LBtcSwapScriptV2 {
         let funding_addrs = Address::from_str(&chain_swap_details.lockup_address)?;
 
         let (sender_pubkey, receiver_pubkey) = match side {
-            Side::From => (our_pubkey, chain_swap_details.server_public_key),
-            Side::To => (chain_swap_details.server_public_key, our_pubkey),
+            Side::Lockup => (our_pubkey, chain_swap_details.server_public_key),
+            Side::Claim => (chain_swap_details.server_public_key, our_pubkey),
         };
 
         let blinding_str = chain_swap_details
             .blinding_key
             .as_ref()
-            .expect("No blinding key provided in CreateSwapResp");
+            .expect("No blinding key provided in ChainSwapDetails");
         let blinding_key = ZKKeyPair::from_seckey_str(&Secp256k1::new(), blinding_str)?;
 
         Ok(Self {
@@ -313,7 +313,7 @@ impl LBtcSwapScriptV2 {
 
     pub fn musig_keyagg_cache(&self) -> MusigKeyAggCache {
         match (self.swap_type, self.side.clone()) {
-            (SwapType::ReverseSubmarine, _) | (SwapType::Chain, Some(Side::To)) => {
+            (SwapType::ReverseSubmarine, _) | (SwapType::Chain, Some(Side::Claim)) => {
                 let pubkeys = [self.sender_pubkey.inner, self.receiver_pubkey.inner];
                 MusigKeyAggCache::new(&Secp256k1::new(), &pubkeys)
             }
@@ -408,33 +408,6 @@ impl LBtcSwapScriptV2 {
         }
     }
 
-    /// Get balance for the swap script
-    pub fn get_balance(&self, network_config: &ElectrumConfig) -> Result<(u64, i64), Error> {
-        let electrum_client = network_config.clone().build_client()?;
-
-        let _ = electrum_client.script_subscribe(BitcoinScript::from_bytes(
-            &self
-                .to_address(network_config.network())?
-                .script_pubkey()
-                .as_bytes(),
-        ))?;
-
-        let balance = electrum_client.script_get_balance(BitcoinScript::from_bytes(
-            &self
-                .to_address(network_config.network())?
-                .script_pubkey()
-                .as_bytes(),
-        ))?;
-
-        let _ = electrum_client.script_unsubscribe(BitcoinScript::from_bytes(
-            &self
-                .to_address(network_config.network())?
-                .script_pubkey()
-                .as_bytes(),
-        ))?;
-        Ok((balance.confirmed, balance.unconfirmed))
-    }
-
     /// Fetch utxo for script from Electrum
     pub fn fetch_utxo(&self, network_config: &ElectrumConfig) -> Result<(OutPoint, TxOut), Error> {
         let electrum_client = network_config.clone().build_client()?;
@@ -466,7 +439,7 @@ impl LBtcSwapScriptV2 {
     }
 
     /// Fetch utxo for script from BoltzApi
-    pub fn fetch_utxo_boltz(
+    pub fn fetch_lockup_utxo_boltz(
         &self,
         network_config: &ElectrumConfig,
         boltz_url: &str,
@@ -489,7 +462,7 @@ impl LBtcSwapScriptV2 {
         };
 
         let address = self.to_address(network_config.network())?;
-        let tx: Transaction = elements::encode::deserialize(&hex_to_bytes(&hex)?)?;
+        let tx: Transaction = elements::encode::deserialize(&hex::decode(&hex)?)?;
         let mut vout = 0;
         for output in tx.clone().output {
             if output.script_pubkey == address.script_pubkey() {
@@ -552,7 +525,7 @@ impl LBtcSwapTxV2 {
 
         let (funding_outpoint, funding_utxo) = match swap_script.fetch_utxo(&network_config) {
             Ok(r) => r,
-            Err(_) => swap_script.fetch_utxo_boltz(&network_config, &boltz_url, &swap_id)?,
+            Err(_) => swap_script.fetch_lockup_utxo_boltz(&network_config, &boltz_url, &swap_id)?,
         };
 
         let electrum = network_config.build_client()?;
@@ -585,7 +558,7 @@ impl LBtcSwapTxV2 {
         let address = Address::from_str(&output_address)?;
         let (funding_outpoint, funding_utxo) = match swap_script.fetch_utxo(&network_config) {
             Ok(r) => r,
-            Err(_) => swap_script.fetch_utxo_boltz(&network_config, &boltz_url, &swap_id)?,
+            Err(_) => swap_script.fetch_lockup_utxo_boltz(&network_config, &boltz_url, &swap_id)?,
         };
 
         let electrum = network_config.build_client()?;

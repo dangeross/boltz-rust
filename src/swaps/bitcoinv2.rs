@@ -127,7 +127,7 @@ impl BtcSwapScriptV2 {
 
     pub fn musig_keyagg_cache(&self) -> MusigKeyAggCache {
         match (self.swap_type, self.side.clone()) {
-            (SwapType::ReverseSubmarine, _) | (SwapType::Chain, Some(Side::To)) => {
+            (SwapType::ReverseSubmarine, _) | (SwapType::Chain, Some(Side::Claim)) => {
                 let pubkeys = [self.sender_pubkey.inner, self.receiver_pubkey.inner];
                 MusigKeyAggCache::new(&Secp256k1::new(), &pubkeys)
             }
@@ -257,8 +257,8 @@ impl BtcSwapScriptV2 {
         let funding_addrs = Address::from_str(&chain_swap_details.lockup_address)?.assume_checked();
 
         let (sender_pubkey, receiver_pubkey) = match side {
-            Side::From => (our_pubkey, chain_swap_details.server_public_key),
-            Side::To => (chain_swap_details.server_public_key, our_pubkey),
+            Side::Lockup => (our_pubkey, chain_swap_details.server_public_key),
+            Side::Claim => (chain_swap_details.server_public_key, our_pubkey),
         };
 
         Ok(BtcSwapScriptV2 {
@@ -524,8 +524,8 @@ impl BtcSwapTxV2 {
     }
 
     /// Compute the Musig partial signature.
-    /// This is used to cooperatively close a Submarine or Chain Swap.
-    pub fn partial_sig(
+    /// This is used to cooperatively settle a Submarine or Chain Swap.
+    pub fn partial_sign(
         &self,
         keys: &Keypair,
         pub_nonce: &String,
@@ -574,7 +574,7 @@ impl BtcSwapTxV2 {
     }
 
     /// Sign a claim transaction.
-    /// Panics if called on a Submarine Swap or Refund Tx.
+    /// Errors if called on a Submarine Swap or Refund Tx.
     /// If the claim is cooperative, provide the other party's partial sigs.
     /// If this is None, transaction will be claimed via taproot script path.
     pub fn sign_claim(
@@ -788,7 +788,7 @@ impl BtcSwapTxV2 {
     }
 
     /// Sign a refund transaction.
-    /// Panics if called on a Reverse Swap or Claim Tx.
+    /// Errors if called for a Reverse Swap.
     pub fn sign_refund(
         &self,
         keys: &Keypair,
