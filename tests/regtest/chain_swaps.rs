@@ -272,6 +272,15 @@ async fn bitcoin_liquid_v2_chain<BC: BitcoinClient, LC: LiquidClient>(
                     unsubscribe
                 );
             }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
+            }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
             }
@@ -567,6 +576,15 @@ async fn liquid_bitcoin_v2_chain<BC: BitcoinClient, LC: LiquidClient>(
                     "Got unexpected boltz unsubscribe response : {:?}",
                     unsubscribe
                 );
+            }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
             }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");

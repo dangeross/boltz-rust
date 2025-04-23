@@ -1,9 +1,9 @@
+pub mod bolt12;
 pub mod ec;
 pub mod fees;
 #[cfg(feature = "lnurl")]
 pub mod lnurl;
 pub mod secrets;
-pub mod bolt12;
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 static INIT: std::sync::Once = std::sync::Once::new();

@@ -257,6 +257,15 @@ async fn bitcoin_v2_submarine<BC: BitcoinClient>(bitcoin_client: &BC, underpay: 
                     unsubscribe
                 );
             }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
+            }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
             }
@@ -300,10 +309,11 @@ async fn bitcoin_v2_reverse<BC: BitcoinClient>(bitcoin_client: BC) {
 
     let addrs_sig = sign_address(&claim_address, &our_keys).unwrap();
     let create_reverse_req = CreateReverseRequest {
-        invoice_amount,
         from: "BTC".to_string(),
         to: "BTC".to_string(),
-        preimage_hash: preimage.sha256,
+        invoice: None,
+        invoice_amount: Some(invoice_amount),
+        preimage_hash: Some(preimage.sha256),
         description: None,
         description_hash: None,
         address_signature: Some(addrs_sig.to_string()),
@@ -319,8 +329,9 @@ async fn bitcoin_v2_reverse<BC: BitcoinClient>(bitcoin_client: BC) {
         .post_reverse_req(create_reverse_req)
         .await
         .unwrap();
+    let invoice = reverse_resp.invoice.clone().unwrap();
 
-    let _ = check_for_mrh(&boltz_api_v2, &reverse_resp.invoice, Chain::Bitcoin(CHAIN))
+    let _ = check_for_mrh(&boltz_api_v2, &invoice, Chain::Bitcoin(CHAIN))
         .await
         .unwrap()
         .unwrap();
@@ -361,10 +372,9 @@ async fn bitcoin_v2_reverse<BC: BitcoinClient>(bitcoin_client: BC) {
                 log::info!("Got Update from server: {}", update.status);
 
                 if update.status == "swap.created" {
-                    log::info!("Waiting for Invoice to be paid: {}", &reverse_resp.invoice);
+                    log::info!("Waiting for Invoice to be paid: {}", &invoice);
 
-                    let invoice = reverse_resp.invoice.clone();
-                    utils::start_pay_invoice_lnd(invoice);
+                    utils::start_pay_invoice_lnd(invoice.clone());
 
                     continue;
                 }
@@ -416,6 +426,15 @@ async fn bitcoin_v2_reverse<BC: BitcoinClient>(bitcoin_client: BC) {
                     unsubscribe
                 );
             }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
+            }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
             }
@@ -459,10 +478,11 @@ async fn bitcoin_v2_reverse_script_path<BC: BitcoinClient>(bitcoin_client: BC) {
 
     let addrs_sig = sign_address(&claim_address, &our_keys).unwrap();
     let create_reverse_req = CreateReverseRequest {
-        invoice_amount,
         from: "BTC".to_string(),
         to: "BTC".to_string(),
-        preimage_hash: preimage.sha256,
+        invoice: None,
+        invoice_amount: Some(invoice_amount),
+        preimage_hash: Some(preimage.sha256),
         description: None,
         description_hash: None,
         address_signature: Some(addrs_sig.to_string()),
@@ -478,8 +498,9 @@ async fn bitcoin_v2_reverse_script_path<BC: BitcoinClient>(bitcoin_client: BC) {
         .post_reverse_req(create_reverse_req)
         .await
         .unwrap();
+    let invoice = reverse_resp.invoice.clone().unwrap();
     let swap_id = reverse_resp.id.clone();
-    let _ = check_for_mrh(&boltz_api_v2, &reverse_resp.invoice, Chain::Bitcoin(CHAIN))
+    let _ = check_for_mrh(&boltz_api_v2, &invoice, Chain::Bitcoin(CHAIN))
         .await
         .unwrap()
         .unwrap();
@@ -520,10 +541,9 @@ async fn bitcoin_v2_reverse_script_path<BC: BitcoinClient>(bitcoin_client: BC) {
                 log::info!("Got Update from server: {}", update.status);
 
                 if update.status == "swap.created" {
-                    log::info!("Waiting for Invoice to be paid: {}", &reverse_resp.invoice);
+                    log::info!("Waiting for Invoice to be paid: {}", &invoice);
 
-                    let invoice = reverse_resp.invoice.clone();
-                    utils::start_pay_invoice_lnd(invoice);
+                    utils::start_pay_invoice_lnd(invoice.clone());
 
                     continue;
                 }
@@ -564,6 +584,15 @@ async fn bitcoin_v2_reverse_script_path<BC: BitcoinClient>(bitcoin_client: BC) {
                     "Got unexpected boltz unsubscribe response : {:?}",
                     unsubscribe
                 );
+            }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
             }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");

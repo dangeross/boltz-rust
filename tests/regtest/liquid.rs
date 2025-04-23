@@ -269,6 +269,15 @@ async fn liquid_v2_submarine<LC: LiquidClient>(liquid_client: &LC, underpay: boo
                     unsubscribe
                 );
             }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
+            }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
             }
@@ -318,10 +327,11 @@ async fn liquid_v2_reverse<LC: LiquidClient>(liquid_client: &LC, lowball: bool) 
     let addrs_sig = sign_address(&claim_address, &our_keys).unwrap();
 
     let create_reverse_req = CreateReverseRequest {
-        invoice_amount,
         from: "BTC".to_string(),
         to: "L-BTC".to_string(),
-        preimage_hash: preimage.sha256,
+        invoice: None,
+        invoice_amount: Some(invoice_amount),
+        preimage_hash: Some(preimage.sha256),
         description: None,
         description_hash: None,
         address_signature: Some(addrs_sig.to_string()),
@@ -338,11 +348,12 @@ async fn liquid_v2_reverse<LC: LiquidClient>(liquid_client: &LC, lowball: bool) 
     reverse_resp
         .validate(&preimage, &claim_public_key, Chain::Liquid(chain))
         .unwrap();
+    let invoice = reverse_resp.invoice.clone().unwrap();
     log::info!("VALIDATED RESPONSE!");
 
     let swap_id = reverse_resp.clone().id;
 
-    let _ = check_for_mrh(&boltz_api_v2, &reverse_resp.invoice, Chain::Liquid(CHAIN))
+    let _ = check_for_mrh(&boltz_api_v2, &invoice, Chain::Liquid(CHAIN))
         .await
         .unwrap()
         .unwrap();
@@ -384,10 +395,9 @@ async fn liquid_v2_reverse<LC: LiquidClient>(liquid_client: &LC, lowball: bool) 
                 log::info!("Got Update from server: {}", update.status);
 
                 if update.status == "swap.created" {
-                    log::info!("Waiting for Invoice to be paid: {}", &reverse_resp.invoice);
+                    log::info!("Waiting for Invoice to be paid: {}", &invoice);
 
-                    let invoice = reverse_resp.invoice.clone();
-                    utils::start_pay_invoice_lnd(invoice);
+                    utils::start_pay_invoice_lnd(invoice.clone());
 
                     continue;
                 }
@@ -451,6 +461,15 @@ async fn liquid_v2_reverse<LC: LiquidClient>(liquid_client: &LC, lowball: bool) 
                     unsubscribe
                 );
             }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
+            }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
             }
@@ -500,10 +519,11 @@ async fn liquid_v2_reverse_script_path<LC: LiquidClient>(liquid_client: &LC, low
     let addrs_sig = sign_address(&claim_address, &our_keys).unwrap();
 
     let create_reverse_req = CreateReverseRequest {
-        invoice_amount,
         from: "BTC".to_string(),
         to: "L-BTC".to_string(),
-        preimage_hash: preimage.sha256,
+        invoice: None,
+        invoice_amount: Some(invoice_amount),
+        preimage_hash: Some(preimage.sha256),
         description: None,
         description_hash: None,
         address_signature: Some(addrs_sig.to_string()),
@@ -520,11 +540,12 @@ async fn liquid_v2_reverse_script_path<LC: LiquidClient>(liquid_client: &LC, low
     reverse_resp
         .validate(&preimage, &claim_public_key, Chain::Liquid(chain))
         .unwrap();
+    let invoice = reverse_resp.invoice.clone().unwrap();
     log::info!("VALIDATED RESPONSE!");
 
     let swap_id = reverse_resp.clone().id;
 
-    let _ = check_for_mrh(&boltz_api_v2, &reverse_resp.invoice, Chain::Liquid(CHAIN))
+    let _ = check_for_mrh(&boltz_api_v2, &invoice, Chain::Liquid(CHAIN))
         .await
         .unwrap()
         .unwrap();
@@ -566,10 +587,9 @@ async fn liquid_v2_reverse_script_path<LC: LiquidClient>(liquid_client: &LC, low
                 log::info!("Got Update from server: {}", update.status);
 
                 if update.status == "swap.created" {
-                    log::info!("Waiting for Invoice to be paid: {}", &reverse_resp.invoice);
+                    log::info!("Waiting for Invoice to be paid: {}", &invoice);
 
-                    let invoice = reverse_resp.invoice.clone();
-                    utils::start_pay_invoice_lnd(invoice);
+                    utils::start_pay_invoice_lnd(invoice.clone());
 
                     continue;
                 }
@@ -620,6 +640,15 @@ async fn liquid_v2_reverse_script_path<LC: LiquidClient>(liquid_client: &LC, low
                     "Got unexpected boltz unsubscribe response : {:?}",
                     unsubscribe
                 );
+            }
+            Ok(WsResponse::InvoiceRequest(invoice_request)) => {
+                log::error!(
+                    "Got unexpected boltz invoice request response : {:?}",
+                    invoice_request
+                );
+            }
+            Ok(WsResponse::Error(error)) => {
+                log::error!("Got unexpected boltz error response : {:?}", error);
             }
             Ok(WsResponse::Pong) => {
                 log::error!("Got unexpected boltz pong response");
